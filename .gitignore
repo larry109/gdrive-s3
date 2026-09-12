@@ -1,0 +1,9 @@
+/gdrive-s3
+/bin/
+.env
+*.env
+data/
+*.db
+*.db-*
+*.log
+.DS_Store
