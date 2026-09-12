@@ -26,6 +26,10 @@ type Config struct {
 	Region     string
 	UsersFile  string
 
+	// Optional read-only demo account exposed by the browser console to
+	// anonymous visitors (the access key of an onboarded user).
+	DemoAccessKey string
+
 	// Optional at-rest encryption; when set, all object content is encrypted
 	// before it reaches Google Drive.
 	EncryptionPassphrase string
@@ -56,6 +60,7 @@ func Load() (*Config, error) {
 		RootFolder:           def(get("ROOT_FOLDER"), "gdrive-s3"),
 		Region:               def(get("REGION"), "us-east-1"),
 		UsersFile:            def(get("USERS_FILE"), "data/users.json"),
+		DemoAccessKey:        get("DEMO_ACCESS_KEY"),
 		EncryptionPassphrase: get("ENCRYPTION_PASSPHRASE"),
 	}
 	c.PublicURL = def(get("PUBLIC_URL"), "http://"+c.ListenAddr)

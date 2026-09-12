@@ -15,6 +15,7 @@ import (
 	"gdrives3/internal/account"
 	"gdrives3/internal/auth"
 	"gdrives3/internal/config"
+	"gdrives3/internal/console"
 	"gdrives3/internal/crypt"
 	"gdrives3/internal/s3"
 	"gdrives3/internal/users"
@@ -48,9 +49,14 @@ func main() {
 		log.Printf("seeded account %s from configuration", cfg.SeedAccessKey)
 	}
 
+	con := console.New(mgr, cfg.DemoAccessKey, cfg.PublicURL, cfg.Region, cipher != nil)
+
 	mux := http.NewServeMux()
-	auth.New(mgr, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.PublicURL).Routes(mux)
-	mux.Handle("/", s3.New(mgr, cfg.Region).Handler())
+	con.Routes(mux)
+	auth.New(mgr, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.PublicURL, con).Routes(mux)
+
+	s3h := s3.New(mgr, cfg.Region).Handler()
+	mux.Handle("/", rootDispatch(con, s3h))
 
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux, ReadHeaderTimeout: 15 * time.Second}
 
@@ -68,4 +74,25 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// rootDispatch shares the root path between the S3 API and the browser console.
+// S3 requests always carry an AWS signature, so signed requests go to the S3
+// handler and unsigned browser navigation to the console page.
+func rootDispatch(con *console.Handler, s3h http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if isS3Request(r) {
+			s3h.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			con.ServeIndex(w, r)
+			return
+		}
+		s3h.ServeHTTP(w, r)
+	}
+}
+
+func isS3Request(r *http.Request) bool {
+	return r.Header.Get("Authorization") != "" || r.URL.Query().Get("X-Amz-Signature") != ""
 }

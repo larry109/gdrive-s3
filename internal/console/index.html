@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gdrive-s3</title>
+<style>
+  :root {
+    --bg: #fafafa; --panel: #ffffff; --ink: #18181b; --muted: #71717a;
+    --line: #e4e4e7; --accent: #2563eb; --accent-ink: #ffffff;
+    --code-bg: #f4f4f5; --danger: #dc2626; --ok: #16a34a; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.5; }
+  a { color: var(--accent); text-decoration: none; }
+  header { border-bottom: 1px solid var(--line); background: var(--panel); }
+  .bar { max-width: 1100px; margin: 0 auto; padding: 1rem 1.25rem;
+         display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .brand { font-size: 1.25rem; font-weight: 650; letter-spacing: -0.01em; }
+  .brand small { display: block; font-size: .8rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .session { display: flex; align-items: center; gap: .6rem; font-size: .9rem; }
+  .pill { font-size: .78rem; padding: .2rem .55rem; border-radius: 999px; border: 1px solid var(--line);
+          color: var(--muted); background: var(--code-bg); white-space: nowrap; }
+  .pill.enc { color: var(--ok); border-color: #bbf7d0; background: #f0fdf4; }
+  .pill.ro  { color: #b45309; border-color: #fde68a; background: #fffbeb; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel);
+           color: var(--ink); padding: .45rem .8rem; border-radius: 8px; }
+  button:hover { border-color: #d4d4d8; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.primary:hover { filter: brightness(1.05); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  main { max-width: 1100px; margin: 0 auto; padding: 1.25rem; }
+
+  .diagram { display: flex; align-items: stretch; gap: .5rem; flex-wrap: wrap;
+             background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+             padding: 1rem; margin-bottom: 1.25rem; }
+  .node { flex: 1 1 180px; min-width: 150px; border: 1px solid var(--line); border-radius: 8px;
+          padding: .7rem .9rem; background: var(--code-bg); }
+  .node b { display: block; font-size: .92rem; }
+  .node span { font-size: .8rem; color: var(--muted); }
+  .arrow { align-self: center; color: var(--muted); font-size: 1.2rem; padding: 0 .1rem; }
+
+  .grid { display: grid; grid-template-columns: 260px 1fr; gap: 1.25rem; align-items: start; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .panel h2 { font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+              margin: 0; padding: .8rem 1rem; border-bottom: 1px solid var(--line);
+              display: flex; align-items: center; justify-content: space-between; }
+  .list { list-style: none; margin: 0; padding: .4rem; }
+  .list li { display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+             padding: .5rem .6rem; border-radius: 7px; }
+  .list li:hover { background: var(--code-bg); }
+  .list .name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list .name.dir { font-weight: 550; }
+  .list .meta { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+  .row-actions { display: flex; gap: .3rem; opacity: 0; }
+  .list li:hover .row-actions { opacity: 1; }
+  .icon-btn { padding: .2rem .4rem; font-size: .78rem; }
+  .icon-btn.del { color: var(--danger); border-color: #fecaca; }
+
+  .toolbar { display: flex; gap: .5rem; padding: .6rem 1rem; border-bottom: 1px solid var(--line);
+             align-items: center; flex-wrap: wrap; }
+  .crumb { font-size: .9rem; color: var(--muted); }
+  .crumb b { color: var(--ink); }
+  .drop { padding: 2rem 1rem; text-align: center; color: var(--muted); border: 2px dashed var(--line);
+          border-radius: 8px; margin: 1rem; transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: #eff6ff; color: var(--accent); }
+  .empty { padding: 2rem 1rem; text-align: center; color: var(--muted); }
+
+  .snippet { margin-top: 1.25rem; }
+  pre { margin: 0; padding: 1rem; background: var(--code-bg); border-radius: 0 0 var(--radius) var(--radius);
+        overflow-x: auto; font-size: .85rem; }
+  .toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%);
+           background: var(--ink); color: #fff; padding: .6rem 1rem; border-radius: 8px;
+           font-size: .88rem; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  progress { width: 100%; height: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">gdrive-s3<small>An S3-compatible API backed by Google Drive</small></div>
+    <div class="session" id="session"></div>
+  </div>
+</header>
+
+<main>
+  <section class="diagram">
+    <div class="node"><b>S3 client</b><span>aws-cli, boto3, SDKs</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>gdrive-s3</b><span>SigV4, multipart, ranges</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Google Drive</b><span>your files, at rest</span></div>
+  </section>
+
+  <div class="grid">
+    <aside class="panel">
+      <h2>Buckets <button class="icon-btn" id="newBucket" title="Create bucket">New</button></h2>
+      <ul class="list" id="buckets"><li class="empty">Loading...</li></ul>
+    </aside>
+
+    <section class="panel">
+      <div class="toolbar">
+        <span class="crumb" id="crumb">Select a bucket</span>
+        <span style="flex:1"></span>
+        <label class="icon-btn" id="uploadLabel" style="display:none">
+          Upload<input type="file" id="file" multiple hidden>
+        </label>
+      </div>
+      <div id="objects"><div class="empty">No bucket selected.</div></div>
+    </section>
+  </div>
+
+  <section class="panel snippet">
+    <h2>Use with any S3 client <button class="icon-btn" id="copy">Copy</button></h2>
+    <pre id="cli"></pre>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const state = { session: null, bucket: null, prefix: "" };
+const $ = (id) => document.getElementById(id);
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2200);
+}
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"]; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(1) + " " + u[i];
+}
+async function api(path, opts) {
+  const r = await fetch("/console/api/" + path, opts);
+  if (r.status === 204) return null;
+  const ct = r.headers.get("content-type") || "";
+  if (!r.ok) {
+    let msg = r.statusText;
+    if (ct.includes("json")) { try { msg = (await r.json()).error || msg; } catch (e) {} }
+    throw new Error(msg);
+  }
+  return ct.includes("json") ? r.json() : r;
+}
+
+async function loadSession() {
+  state.session = await api("session");
+  const s = state.session, el = $("session"); el.innerHTML = "";
+  if (s.encrypted) el.appendChild(pill("encrypted at rest", "enc"));
+  if (s.authenticated) {
+    el.appendChild(pill(s.email ? s.email : "connected", ""));
+  } else {
+    el.appendChild(pill("demo, read-only", "ro"));
+    const b = document.createElement("button");
+    b.className = "primary"; b.textContent = "Connect your Google Drive";
+    b.onclick = () => location.href = "/auth/login";
+    el.appendChild(b);
+  }
+  const writable = s.authenticated;
+  $("newBucket").style.display = writable ? "" : "none";
+  updateCli();
+}
+function pill(text, cls) {
+  const p = document.createElement("span"); p.className = "pill " + cls; p.textContent = text; return p;
+}
+
+async function loadBuckets() {
+  const ul = $("buckets"); ul.innerHTML = "";
+  let data;
+  try { data = await api("buckets"); } catch (e) { ul.innerHTML = `<li class="empty">${e.message}</li>`; return; }
+  const buckets = data.buckets || [];
+  if (!buckets.length) { ul.innerHTML = `<li class="empty">No buckets yet.</li>`; return; }
+  for (const b of buckets) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "name dir"; name.textContent = b.name;
+    name.onclick = () => openBucket(b.name);
+    li.appendChild(name);
+    if (state.session.authenticated) {
+      const act = document.createElement("span"); act.className = "row-actions";
+      const del = document.createElement("button");
+      del.className = "icon-btn del"; del.textContent = "Delete"; del.title = "Delete bucket";
+      del.onclick = (e) => { e.stopPropagation(); deleteBucket(b.name); };
+      act.appendChild(del); li.appendChild(act);
+    }
+    ul.appendChild(li);
+  }
+}
+
+async function openBucket(name) {
+  state.bucket = name; state.prefix = "";
+  await loadObjects();
+  updateCli();
+}
+
+async function loadObjects() {
+  const box = $("objects"), crumb = $("crumb");
+  const writable = state.session.authenticated;
+  $("uploadLabel").style.display = writable && state.bucket ? "" : "none";
+  if (!state.bucket) { box.innerHTML = `<div class="empty">No bucket selected.</div>`; crumb.textContent = "Select a bucket"; return; }
+
+  crumb.innerHTML = `<b>${state.bucket}</b>/` + state.prefix;
+  let data;
+  try {
+    data = await api(`buckets/${encodeURIComponent(state.bucket)}/objects?delimiter=/&prefix=${encodeURIComponent(state.prefix)}`);
+  } catch (e) { box.innerHTML = `<div class="empty">${e.message}</div>`; return; }
+
+  const ul = document.createElement("ul"); ul.className = "list";
+  if (state.prefix) {
+    const up = document.createElement("li");
+    const n = document.createElement("span"); n.className = "name dir"; n.textContent = "..";
+    const parent = state.prefix.replace(/[^/]+\/$/, "");
+    n.onclick = () => { state.prefix = parent; loadObjects(); };
+    up.appendChild(n); ul.appendChild(up);
+  }
+  for (const p of (data.prefixes || [])) {
+    const li = document.createElement("li");
+    const n = document.createElement("span"); n.className = "name dir";
+    n.textContent = p.slice(state.prefix.length);
+    n.onclick = () => { state.prefix = p; loadObjects(); };
+    li.appendChild(n); ul.appendChild(li);
+  }
+  for (const o of (data.objects || [])) {
+    const li = document.createElement("li");
+    const n = document.createElement("span"); n.className = "name";
+    n.textContent = o.key.slice(state.prefix.length);
+    n.onclick = () => downloadObject(o.key);
+    li.appendChild(n);
+    const meta = document.createElement("span"); meta.className = "meta"; meta.textContent = fmtSize(o.size);
+    li.appendChild(meta);
+    if (writable) {
+      const act = document.createElement("span"); act.className = "row-actions";
+      const del = document.createElement("button");
+      del.className = "icon-btn del"; del.textContent = "Delete";
+      del.onclick = (e) => { e.stopPropagation(); deleteObject(o.key); };
+      act.appendChild(del); li.appendChild(act);
+    }
+    ul.appendChild(li);
+  }
+  if (!ul.children.length) { box.innerHTML = `<div class="empty">Empty bucket.</div>`; }
+  else { box.innerHTML = ""; box.appendChild(ul); }
+
+  if (writable) setupDrop(box);
+}
+
+async function createBucket() {
+  const name = prompt("Bucket name");
+  if (!name) return;
+  try {
+    await api("buckets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    toast("Bucket created"); loadBuckets();
+  } catch (e) { toast(e.message); }
+}
+async function deleteBucket(name) {
+  if (!confirm(`Delete bucket "${name}"?`)) return;
+  try {
+    await api(`buckets/${encodeURIComponent(name)}`, { method: "DELETE" });
+    toast("Bucket deleted");
+    if (state.bucket === name) { state.bucket = null; loadObjects(); }
+    loadBuckets();
+  } catch (e) { toast(e.message); }
+}
+async function deleteObject(key) {
+  if (!confirm(`Delete "${key}"?`)) return;
+  try {
+    await api(`buckets/${encodeURIComponent(state.bucket)}/o/${key.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" });
+    toast("Deleted"); loadObjects();
+  } catch (e) { toast(e.message); }
+}
+function downloadObject(key) {
+  const url = `/console/api/buckets/${encodeURIComponent(state.bucket)}/o/${key.split("/").map(encodeURIComponent).join("/")}`;
+  const a = document.createElement("a"); a.href = url; a.download = key.split("/").pop(); a.click();
+}
+
+async function uploadFiles(files) {
+  for (const f of files) {
+    const key = state.prefix + f.name;
+    try {
+      await api(`buckets/${encodeURIComponent(state.bucket)}/o/${key.split("/").map(encodeURIComponent).join("/")}`,
+        { method: "PUT", headers: { "Content-Type": f.type || "application/octet-stream" }, body: f });
+      toast(`Uploaded ${f.name}`);
+    } catch (e) { toast(`${f.name}: ${e.message}`); }
+  }
+  loadObjects();
+}
+function setupDrop(box) {
+  box.ondragover = (e) => { e.preventDefault(); box.classList.add("over"); };
+  box.ondragleave = () => box.classList.remove("over");
+  box.ondrop = (e) => { e.preventDefault(); box.classList.remove("over"); if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); };
+}
+
+function updateCli() {
+  const s = state.session; if (!s) return;
+  const ep = s.endpoint, b = state.bucket || "my-bucket";
+  $("cli").textContent =
+`export AWS_ACCESS_KEY_ID=...        # shown once after you connect
+export AWS_SECRET_ACCESS_KEY=...
+aws configure set default.s3.addressing_style path
+
+aws --endpoint-url ${ep} --region ${s.region} s3 ls
+aws --endpoint-url ${ep} s3 cp ./file.bin s3://${b}/file.bin
+aws --endpoint-url ${ep} s3 cp s3://${b}/file.bin ./file.bin`;
+}
+
+$("newBucket").onclick = createBucket;
+$("file").onchange = (e) => { if (e.target.files.length) uploadFiles(e.target.files); e.target.value = ""; };
+$("copy").onclick = () => { navigator.clipboard.writeText($("cli").textContent); toast("Copied"); };
+
+(async () => {
+  try { await loadSession(); await loadBuckets(); }
+  catch (e) { toast("Failed to load: " + e.message); }
+})();
+</script>
+</body>
+</html>

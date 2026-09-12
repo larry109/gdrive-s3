@@ -21,8 +21,15 @@ import (
 
 const scope = "https://www.googleapis.com/auth/drive.file"
 
+// Sessions issues a browser session cookie for an onboarded access key, so the
+// user lands in the console already signed in after the OAuth flow.
+type Sessions interface {
+	StartSession(w http.ResponseWriter, accessKey, email string)
+}
+
 type Handler struct {
 	mgr          *account.Manager
+	sessions     Sessions
 	clientID     string
 	clientSecret string
 	redirectURI  string
@@ -31,9 +38,9 @@ type Handler struct {
 	states map[string]time.Time
 }
 
-func New(mgr *account.Manager, clientID, clientSecret, publicURL string) *Handler {
+func New(mgr *account.Manager, clientID, clientSecret, publicURL string, sessions Sessions) *Handler {
 	return &Handler{
-		mgr: mgr, clientID: clientID, clientSecret: clientSecret,
+		mgr: mgr, sessions: sessions, clientID: clientID, clientSecret: clientSecret,
 		redirectURI: strings.TrimRight(publicURL, "/") + "/auth/callback",
 		states:      map[string]time.Time{},
 	}
@@ -77,6 +84,9 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "could not create user", http.StatusInternalServerError)
 		return
+	}
+	if h.sessions != nil {
+		h.sessions.StartSession(w, u.AccessKey, u.Email)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, credentialsPage, u.AccessKey, u.SecretKey)
@@ -147,4 +157,5 @@ code{background:#f4f4f5;padding:.2rem .4rem;border-radius:4px}
 <p>Secret access key</p><div class="k">%s</div>
 <p>Use them with any S3 client pointed at this server, e.g.:</p>
 <pre>aws --endpoint-url $ENDPOINT s3 ls</pre>
+<p><a href="/">Open the console &rarr;</a></p>
 </body></html>`

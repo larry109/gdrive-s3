@@ -21,6 +21,10 @@ usual XML responses — so existing tooling works without changes.
 - **Optional at-rest encryption**: a passphrase enables transparent, streaming
   authenticated encryption (XSalsa20-Poly1305, key derived with scrypt). Google
   Drive only ever stores ciphertext; the passphrase never leaves the operator.
+- **Web console**: a built-in single-page UI to browse buckets and objects,
+  upload (drag and drop), download and delete, with a copy-paste snippet for the
+  equivalent S3 client commands. It shares the root path with the S3 API and is
+  served to browsers, while signed S3 requests are routed to the protocol layer.
 - Uses the narrow `drive.file` OAuth scope (the app only sees files it created).
 
 ## Quick start
@@ -52,6 +56,14 @@ aws $EP s3 ls s3://photos/
 For quick local use without the OAuth flow, seed one account from configuration
 with `GOOGLE_REFRESH_TOKEN`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`.
 
+### Web console
+
+Open the root URL in a browser. Signing in with Google establishes a session and
+lets you manage your own buckets and objects; without a session the console is
+read-only. Set `DEMO_ACCESS_KEY` to the access key of an onboarded account to
+expose that account as a public, read-only demo (visitors can browse and
+download but not create, upload or delete).
+
 ## Architecture
 
 ```
@@ -63,6 +75,7 @@ internal/crypt       streaming authenticated encryption (secretbox + scrypt)
 internal/users       persistent access-key -> account store
 internal/account     resolves an access key to a per-user storage backend
 internal/auth        Google OAuth sign-in flow
+internal/console     browser UI and its session-authenticated JSON API
 internal/s3          S3 protocol: SigV4 verification, XML, HTTP handlers
 ```
 
@@ -75,6 +88,8 @@ internal/s3          S3 protocol: SigV4 verification, XML, HTTP handlers
   concatenated on completion.
 - Encryption is per-server (one passphrase). Enabling it on a store that already
   holds plaintext, or vice versa, is unsupported.
+- The `/auth/` and `/console/` path prefixes are reserved for the sign-in flow
+  and the console API; avoid bucket names that would collide with them.
 
 ## License
 
