@@ -10,16 +10,25 @@ import (
 )
 
 type Config struct {
+	// Google OAuth application (required, used for the multi-user sign-in flow).
 	GoogleClientID     string
 	GoogleClientSecret string
-	GoogleRefreshToken string
 
-	AccessKey string
-	SecretKey string
+	// Optional single-account seed: exposes one Google account through fixed S3
+	// credentials without going through the OAuth flow (handy for local use).
+	SeedRefreshToken string
+	SeedAccessKey    string
+	SeedSecretKey    string
 
 	ListenAddr string
+	PublicURL  string
 	RootFolder string
 	Region     string
+	UsersFile  string
+
+	// Optional at-rest encryption; when set, all object content is encrypted
+	// before it reaches Google Drive.
+	EncryptionPassphrase string
 }
 
 func Load() (*Config, error) {
@@ -38,27 +47,25 @@ func Load() (*Config, error) {
 	}
 
 	c := &Config{
-		GoogleClientID:     get("GOOGLE_CLIENT_ID"),
-		GoogleClientSecret: get("GOOGLE_CLIENT_SECRET"),
-		GoogleRefreshToken: get("GOOGLE_REFRESH_TOKEN"),
-		AccessKey:          get("S3_ACCESS_KEY"),
-		SecretKey:          get("S3_SECRET_KEY"),
-		ListenAddr:         def(get("LISTEN_ADDR"), "127.0.0.1:9000"),
-		RootFolder:         def(get("ROOT_FOLDER"), "gdrive-s3"),
-		Region:             def(get("REGION"), "us-east-1"),
+		GoogleClientID:       get("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:   get("GOOGLE_CLIENT_SECRET"),
+		SeedRefreshToken:     get("GOOGLE_REFRESH_TOKEN"),
+		SeedAccessKey:        get("S3_ACCESS_KEY"),
+		SeedSecretKey:        get("S3_SECRET_KEY"),
+		ListenAddr:           def(get("LISTEN_ADDR"), "127.0.0.1:9000"),
+		RootFolder:           def(get("ROOT_FOLDER"), "gdrive-s3"),
+		Region:               def(get("REGION"), "us-east-1"),
+		UsersFile:            def(get("USERS_FILE"), "data/users.json"),
+		EncryptionPassphrase: get("ENCRYPTION_PASSPHRASE"),
 	}
+	c.PublicURL = def(get("PUBLIC_URL"), "http://"+c.ListenAddr)
 
 	var missing []string
-	for k, v := range map[string]string{
-		"GOOGLE_CLIENT_ID":     c.GoogleClientID,
-		"GOOGLE_CLIENT_SECRET": c.GoogleClientSecret,
-		"GOOGLE_REFRESH_TOKEN": c.GoogleRefreshToken,
-		"S3_ACCESS_KEY":        c.AccessKey,
-		"S3_SECRET_KEY":        c.SecretKey,
-	} {
-		if v == "" {
-			missing = append(missing, k)
-		}
+	if c.GoogleClientID == "" {
+		missing = append(missing, "GOOGLE_CLIENT_ID")
+	}
+	if c.GoogleClientSecret == "" {
+		missing = append(missing, "GOOGLE_CLIENT_SECRET")
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))

@@ -17,6 +17,7 @@ func (e APIError) Error() string { return e.Code + ": " + e.Message }
 var (
 	errNoSuchBucket     = APIError{http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist."}
 	errNoSuchKey        = APIError{http.StatusNotFound, "NoSuchKey", "The specified key does not exist."}
+	errNoSuchUpload     = APIError{http.StatusNotFound, "NoSuchUpload", "The specified multipart upload does not exist."}
 	errBucketExists     = APIError{http.StatusConflict, "BucketAlreadyOwnedByYou", "The bucket already exists."}
 	errBucketNotEmpty   = APIError{http.StatusConflict, "BucketNotEmpty", "The bucket you tried to delete is not empty."}
 	errAccessDenied     = APIError{http.StatusForbidden, "AccessDenied", "Access denied."}
@@ -24,6 +25,7 @@ var (
 	errInvalidAccessKey = APIError{http.StatusForbidden, "InvalidAccessKeyId", "The access key id does not exist."}
 	errMissingAuth      = APIError{http.StatusForbidden, "AccessDenied", "Missing authentication credentials."}
 	errNotImplemented   = APIError{http.StatusNotImplemented, "NotImplemented", "This operation is not implemented."}
+	errInvalidRange     = APIError{http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable."}
 	errInternal         = APIError{http.StatusInternalServerError, "InternalError", "We encountered an internal error."}
 	errInvalidRequest   = APIError{http.StatusBadRequest, "InvalidRequest", "Invalid request."}
 )

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"gdrives3/internal/crypt"
 	"gdrives3/internal/gdrive"
 )
 
@@ -47,14 +48,32 @@ type ListResult struct {
 type Store struct {
 	gd       *gdrive.Client
 	rootName string
+	cipher   *crypt.Cipher // optional at-rest encryption
 
 	mu     sync.Mutex
 	rootID string
 }
 
-func New(gd *gdrive.Client, rootName string) *Store {
-	return &Store{gd: gd, rootName: rootName}
+func New(gd *gdrive.Client, rootName string, cipher *crypt.Cipher) *Store {
+	return &Store{gd: gd, rootName: rootName, cipher: cipher}
 }
+
+// objInfo reports the plaintext size and ETag for a stored file, accounting for
+// encryption (which changes the on-Drive size and makes the MD5 opaque).
+func (s *Store) objInfo(f gdrive.File) (int64, string) {
+	if s.cipher != nil {
+		return s.cipher.DecryptedSize(f.Size), f.MD5 + "-enc"
+	}
+	return f.Size, f.MD5
+}
+
+type decryptCloser struct {
+	r io.Reader
+	c io.Closer
+}
+
+func (d decryptCloser) Read(p []byte) (int, error) { return d.r.Read(p) }
+func (d decryptCloser) Close() error               { return d.c.Close() }
 
 func (s *Store) root(ctx context.Context) (string, error) {
 	s.mu.Lock()
@@ -104,7 +123,7 @@ func (s *Store) ListBuckets(ctx context.Context) ([]Bucket, error) {
 	}
 	var out []Bucket
 	for _, c := range children {
-		if c.IsFolder {
+		if c.IsFolder && !strings.HasPrefix(c.Name, ".") {
 			out = append(out, Bucket{Name: c.Name, Created: c.Modified})
 		}
 	}
@@ -157,11 +176,20 @@ func (s *Store) PutObject(ctx context.Context, bucket, key string, size int64, r
 	} else if !errors.Is(cerr, gdrive.ErrNotFound) {
 		return Object{}, cerr
 	}
+	plainSize := size
+	if s.cipher != nil {
+		r = s.cipher.EncryptReader(r)
+		size = s.cipher.EncryptedSize(size)
+	}
 	f, err := s.gd.Upload(ctx, key, id, size, r, contentType)
 	if err != nil {
 		return Object{}, err
 	}
-	return Object{Key: key, Size: f.Size, ETag: f.MD5, LastModified: f.Modified, ContentType: contentType}, nil
+	tag := f.MD5
+	if s.cipher != nil {
+		tag = f.MD5 + "-enc"
+	}
+	return Object{Key: key, Size: plainSize, ETag: tag, LastModified: f.Modified, ContentType: contentType}, nil
 }
 
 func (s *Store) object(ctx context.Context, bucket, key string) (string, gdrive.File, error) {
@@ -184,7 +212,8 @@ func (s *Store) HeadObject(ctx context.Context, bucket, key string) (Object, err
 	if err != nil {
 		return Object{}, err
 	}
-	return Object{Key: key, Size: f.Size, ETag: f.MD5, LastModified: f.Modified, ContentType: f.MimeType}, nil
+	size, tag := s.objInfo(f)
+	return Object{Key: key, Size: size, ETag: tag, LastModified: f.Modified, ContentType: f.MimeType}, nil
 }
 
 func (s *Store) GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, Object, error) {
@@ -196,7 +225,61 @@ func (s *Store) GetObject(ctx context.Context, bucket, key string) (io.ReadClose
 	if err != nil {
 		return nil, Object{}, err
 	}
-	return rc, Object{Key: key, Size: f.Size, ETag: f.MD5, LastModified: f.Modified, ContentType: f.MimeType}, nil
+	if s.cipher != nil {
+		rc = decryptCloser{r: s.cipher.DecryptReader(rc), c: rc}
+	}
+	size, tag := s.objInfo(f)
+	return rc, Object{Key: key, Size: size, ETag: tag, LastModified: f.Modified, ContentType: f.MimeType}, nil
+}
+
+// GetObjectRange returns a reader for the inclusive plaintext byte range
+// [start, end]. For encrypted objects it downloads only the ciphertext chunks
+// that cover the range, decrypts them and trims to the exact bounds.
+func (s *Store) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (io.ReadCloser, Object, error) {
+	fid, f, err := s.object(ctx, bucket, key)
+	if err != nil {
+		return nil, Object{}, err
+	}
+	size, tag := s.objInfo(f)
+	obj := Object{Key: key, Size: size, ETag: tag, LastModified: f.Modified, ContentType: f.MimeType}
+
+	if s.cipher == nil {
+		rc, err := s.gd.DownloadRange(ctx, fid, start, end)
+		if err != nil {
+			return nil, Object{}, err
+		}
+		return rc, obj, nil
+	}
+
+	hrc, err := s.gd.DownloadRange(ctx, fid, 0, int64(crypt.HeaderSize-1))
+	if err != nil {
+		return nil, Object{}, err
+	}
+	base, err := crypt.ParseHeader(hrc)
+	hrc.Close()
+	if err != nil {
+		return nil, Object{}, err
+	}
+	block := int64(crypt.ChunkSize + crypt.ChunkOverhead)
+	firstChunk := start / int64(crypt.ChunkSize)
+	lastChunk := end / int64(crypt.ChunkSize)
+	cipherStart := int64(crypt.HeaderSize) + firstChunk*block
+	cipherEnd := int64(crypt.HeaderSize) + (lastChunk+1)*block - 1
+	if cipherEnd > f.Size-1 {
+		cipherEnd = f.Size - 1
+	}
+	crc, err := s.gd.DownloadRange(ctx, fid, cipherStart, cipherEnd)
+	if err != nil {
+		return nil, Object{}, err
+	}
+	dec := s.cipher.DecryptChunks(crc, base, uint64(firstChunk))
+	if skip := start - firstChunk*int64(crypt.ChunkSize); skip > 0 {
+		if _, err := io.CopyN(io.Discard, dec, skip); err != nil {
+			crc.Close()
+			return nil, Object{}, err
+		}
+	}
+	return decryptCloser{r: io.LimitReader(dec, end-start+1), c: crc}, obj, nil
 }
 
 func (s *Store) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -261,7 +344,8 @@ func (s *Store) ListObjects(ctx context.Context, bucket, prefix, delimiter, star
 			res.NextToken = f.Name
 			return res, nil
 		}
-		res.Objects = append(res.Objects, Object{Key: f.Name, Size: f.Size, ETag: f.MD5, LastModified: f.Modified, ContentType: f.MimeType})
+		size, tag := s.objInfo(f)
+		res.Objects = append(res.Objects, Object{Key: f.Name, Size: size, ETag: tag, LastModified: f.Modified, ContentType: f.MimeType})
 		count++
 	}
 	return res, nil

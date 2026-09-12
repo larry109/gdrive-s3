@@ -1,9 +1,9 @@
-// Command gdrive-s3 serves an S3-compatible API backed by Google Drive.
+// Command gdrive-s3 serves an S3-compatible API backed by Google Drive, with
+// per-user Google OAuth and optional at-rest encryption.
 package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"log"
 	"net/http"
@@ -12,10 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"gdrives3/internal/account"
+	"gdrives3/internal/auth"
 	"gdrives3/internal/config"
-	"gdrives3/internal/gdrive"
+	"gdrives3/internal/crypt"
 	"gdrives3/internal/s3"
-	"gdrives3/internal/storage"
+	"gdrives3/internal/users"
 )
 
 func main() {
@@ -25,25 +27,37 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	gd := gdrive.New(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken)
-	store := storage.New(gd, cfg.RootFolder)
-
-	creds := func(accessKey string) (string, bool) {
-		if subtle.ConstantTimeCompare([]byte(accessKey), []byte(cfg.AccessKey)) == 1 {
-			return cfg.SecretKey, true
+	var cipher *crypt.Cipher
+	if cfg.EncryptionPassphrase != "" {
+		if cipher, err = crypt.NewCipher(cfg.EncryptionPassphrase); err != nil {
+			log.Fatalf("encryption: %v", err)
 		}
-		return "", false
+		log.Printf("at-rest encryption enabled")
 	}
-	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           s3.New(store, creds, cfg.Region).Handler(),
-		ReadHeaderTimeout: 15 * time.Second,
+
+	us, err := users.Open(cfg.UsersFile)
+	if err != nil {
+		log.Fatalf("users: %v", err)
 	}
+	mgr := account.New(us, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.RootFolder, cipher)
+
+	if cfg.SeedAccessKey != "" && cfg.SeedRefreshToken != "" {
+		if err := mgr.Seed(cfg.SeedAccessKey, cfg.SeedSecretKey, cfg.SeedRefreshToken); err != nil {
+			log.Fatalf("seed account: %v", err)
+		}
+		log.Printf("seeded account %s from configuration", cfg.SeedAccessKey)
+	}
+
+	mux := http.NewServeMux()
+	auth.New(mgr, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.PublicURL).Routes(mux)
+	mux.Handle("/", s3.New(mgr, cfg.Region).Handler())
+
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux, ReadHeaderTimeout: 15 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
-		log.Printf("gdrive-s3 listening on %s (root folder %q)", cfg.ListenAddr, cfg.RootFolder)
+		log.Printf("gdrive-s3 listening on %s  (sign in at %s/auth/login)", cfg.ListenAddr, cfg.PublicURL)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("server: %v", err)
 			os.Exit(1)

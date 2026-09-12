@@ -295,6 +295,26 @@ func (c *Client) Download(ctx context.Context, id string) (io.ReadCloser, error)
 	return resp.Body, nil
 }
 
+// DownloadRange opens the content of a file for the inclusive byte range
+// [start, end].
+func (c *Client) DownloadRange(ctx context.Context, id string, start, end int64) (io.ReadCloser, error) {
+	req, err := c.do(ctx, http.MethodGet, filesURL+"/"+id+"?alt=media", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("gdrive: range download: %s: %s", resp.Status, snippet(body))
+	}
+	return resp.Body, nil
+}
+
 // Delete permanently removes a file or folder.
 func (c *Client) Delete(ctx context.Context, id string) error {
 	req, err := c.do(ctx, http.MethodDelete, filesURL+"/"+id, nil)
